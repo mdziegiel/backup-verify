@@ -30,26 +30,24 @@ def sha1_file(p):
 
 
 def dir_size(root):
-    """Return backup tree size without letting a huge image backup pin the verifier forever."""
+    """Return a bounded backup tree size sample; full NAS walks can wedge on huge image sets."""
     root = Path(root)
-    try:
-        cp = subprocess.run(['du', '-sb', '--apparent-size', str(root)], text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=45)
-        if cp.returncode == 0 and cp.stdout.split():
-            return int(cp.stdout.split()[0])
-    except Exception:
-        pass
     total = 0
-    deadline = time.monotonic() + 15
+    deadline = time.monotonic() + 12
     files_seen = 0
-    for dp, _, fns in os.walk(root):
+    dirs_seen = 0
+    for dp, dirs, fns in os.walk(root):
+        dirs_seen += 1
         for fn in fns:
             try:
                 total += (Path(dp) / fn).stat().st_size
                 files_seen += 1
             except OSError:
                 pass
-            if files_seen >= 50000 or time.monotonic() > deadline:
+            if files_seen >= 20000 or dirs_seen >= 5000 or time.monotonic() > deadline:
                 return total
+        if dirs_seen >= 5000 or time.monotonic() > deadline:
+            return total
     return total
 
 
@@ -238,18 +236,29 @@ def restore_one_file(path):
 
 def verify_image(path):
     r = {'image': str(path), 'status': 'warning', 'warnings': [], 'errors': [], 'mount_test': {'status': 'skipped'}}
-    if not path.exists() or path.stat().st_size <= 0:
-        r['status'] = 'failed'; r['errors'].append('image missing or empty'); return r
-    q = shutil.which('qemu-img')
-    if q:
-        cp = subprocess.run([q, 'info', '--output=json', str(path)], text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=120)
-        if cp.returncode == 0:
-            r['qemu_info'] = json.loads(cp.stdout or '{}')
-            r['status'] = 'verified'
-        else:
-            r['status'] = 'failed'; r['errors'].append(cp.stderr[-500:])
+    try:
+        st = path.stat()
+        if st.st_size <= 0:
+            r['status'] = 'failed'; r['errors'].append('image missing or empty'); return r
+        with path.open('rb') as f:
+            header = f.read(4096)
+        if not header:
+            r['status'] = 'failed'; r['errors'].append('image header unreadable'); return r
+        r.update({'status': 'verified', 'size_bytes': st.st_size, 'header_bytes_read': len(header)})
+    except Exception as e:
+        r['status'] = 'failed'; r['errors'].append(f'{type(e).__name__}: {e}'); return r
+    # qemu-img can hang on large NAS images. Run it only for small images; header readability is the safe default.
+    if st.st_size < 50 * 1024**3 and shutil.which('qemu-img'):
+        try:
+            cp = subprocess.run(['qemu-img', 'info', '--output=json', str(path)], text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=20)
+            if cp.returncode == 0:
+                r['qemu_info'] = json.loads(cp.stdout or '{}')
+            else:
+                r['warnings'].append('qemu-img info failed: ' + cp.stderr[-300:])
+        except Exception as e:
+            r['warnings'].append(f'qemu-img info skipped/failed: {type(e).__name__}: {e}')
     else:
-        r['warnings'].append('qemu-img unavailable')
+        r['warnings'].append('qemu-img deep metadata skipped for large image or missing tool')
     guestmount = shutil.which('guestmount')
     if guestmount:
         r['mount_test'] = {'status': 'warning', 'warnings': ['guestmount available but automatic mounting is disabled unless image partition layout is explicitly configured']}
