@@ -1,23 +1,31 @@
 # Backup Verify
 
-Self-hosted backup verification and disk-health dashboard for the MRDTech homelab.
+Self-hosted backup verification, restore-drill, notification, offsite, and disk-health dashboard for the MRDTech homelab.
 
-It does the part most backup systems avoid saying out loud: it checks whether the backup looks restorable. A backup that cannot be read, sampled, mounted, or validated is not a backup. It is a ritual.
+It does the part most backup systems avoid saying out loud: it checks whether the backup looks restorable. A backup that cannot be read, sampled, mounted, or validated is not a backup. It is a ritual with a progress bar.
 
 ## Features
 
 - Single Docker container on port `10122`.
-- Default schedule: Sunday at 02:00 (`0 2 * * 0`).
+- Dashboard schedule management with enable/disable, daily/weekly/monthly visual cron builder, next-run display, per-client Run Now, and Run All Clients.
+- Persistent SQLite history for all verification runs, client details, disk metrics, notification attempts, trend data, and exports.
 - UrBackup latest-backup discovery for configured clients.
 - File backup spot checks with configurable random sample size.
-- Verifies file existence, non-zero size, readability, critical Windows paths, and SHA checksum matches when checksum manifests exist.
-- VHD/VHDX/raw image detection with `qemu-img` readability metadata checks. Full read-only mount checks require privileged container and host-supported image tooling.
-- SMART health checks with `smartctl`: temperature, reallocated sectors, pending sectors, uncorrectable errors, power-on hours, and overall status.
-- QNAP API probe for `10.10.10.230`.
-- Telegram-only notifications, loaded from direct env vars or a mounted Hermes `.env`.
+- Critical path verification for `Windows`, `Users`, `Program Files`, and `ProgramData` by default.
+- Backup-age warning threshold, default 2 days.
+- Per-file failure details showing the exact file and reason.
+- Backup size tracking over time with warning when size drops significantly.
+- Restore drill that copies a sample file to a temp location and verifies it can be opened/read.
+- Retention policy checker for minimum backup copy count.
+- VHD/VHDX/raw image detection with `qemu-img` metadata/readability checks and guestmount capability reporting.
+- SMART history trending, drive temperature tracking, NVMe-specific health fields, and predictive warnings for bad SMART indicators.
+- QNAP API probe for `10.10.10.230` volume-health reachability.
+- Notification settings panel for Telegram, Email/SMTP, and Gotify with test buttons.
+- Notification triggers: completion, failure-only, warning, disk-health-change flag, and quiet hours.
+- Backblaze B2 panel with API/bucket settings, bucket size, estimated monthly cost, latest uploaded object time, sync-behind warning, download test, SHA1 metadata accounting, and offsite coverage estimate.
+- Dashboard improvements: prominent last successful backup date per client, green/yellow/red age coloring, 30-day success rate, detailed client view, backup trend chart, disk cards, history table.
+- Weekly summary support through the normal scheduler and notification channels.
 - NOC integration output at `/opt/backup-verify/results.json`.
-- Dark glassmorphism web UI with dashboard, disk panel, history log, and manual trigger buttons.
-- Persistent SQLite history volume.
 
 ## Target environment
 
@@ -45,6 +53,11 @@ After each run the app writes `/opt/backup-verify/results.json`:
     "status": "healthy",
     "drives_checked": 4,
     "drives_failed": 0
+  },
+  "b2": {
+    "status": "healthy",
+    "last_run_time": "2026-06-11T02:00:00",
+    "offsite_coverage_score": 96.4
   }
 }
 ```
@@ -65,9 +78,12 @@ curl http://127.0.0.1:10122/api/health
 - `GET /api/health`
 - `GET /api/status`
 - `GET /api/history`
+- `GET /api/history.csv`
+- `GET /api/history.pdf`
 - `GET /api/results.json`
 - `POST /api/run` with optional `{"clients":["MichaelD-ASUS"]}`
 - `POST /api/settings`
+- `POST /api/test-notification` with `{"channel":"telegram|email|gotify|all"}`
 
 ## Deployment notes
 
@@ -77,7 +93,7 @@ The compose file mounts:
 - `backup_verify_results:/opt/backup-verify` for NOC results.
 - `/mnt/qnap-backups/urbackup:/mnt/qnap-backups/urbackup:ro` for backup reads.
 - `/dev:/dev:ro` plus `privileged: true` for SMART. SMART requires device access. Dashboards pretending otherwise are theater.
-- `/home/michaeld/.hermes/.env:/host-hermes/.env:ro` for Telegram fallback. If the Hermes env only exists on `10.10.10.237`, copy the Telegram token/chat ID into `.env` on `10.10.10.76` or mount it over the network. Cross-host magic is not a transport protocol.
+- `/home/michaeld/.hermes/.env:/host-hermes/.env:ro` for Telegram fallback. If the Hermes env only exists on another host, set the token/chat ID directly in `.env` on `10.10.10.76` or mount it properly. Cross-host magic is not a transport protocol.
 
 ## Local development
 
@@ -95,6 +111,7 @@ APP_DATA_DIR=/tmp/backup-verify APP_DB=/tmp/backup-verify/app.db RESULTS_FILE=/t
 - Mount backup storage read-only.
 - Use read-only API credentials where possible.
 - Treat the host running SMART checks as privileged.
+- B2, SMTP, Gotify, and Telegram secrets are stored in the persistent app settings database if saved through the dashboard. That is convenient. It is also a secret store, whether anyone admits it or not.
 
 ## License
 
