@@ -1,4 +1,4 @@
-import hashlib, json, os, re, shutil, subprocess, tempfile, urllib.parse, urllib.request, ssl
+import hashlib, json, os, re, shutil, subprocess, tempfile, urllib.parse, urllib.request, ssl, time
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
 from .urbackup import UrBackupClient, find_client_root, find_latest_backup_dir, random_files, find_images
@@ -30,13 +30,26 @@ def sha1_file(p):
 
 
 def dir_size(root):
+    """Return backup tree size without letting a huge image backup pin the verifier forever."""
+    root = Path(root)
+    try:
+        cp = subprocess.run(['du', '-sb', '--apparent-size', str(root)], text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=45)
+        if cp.returncode == 0 and cp.stdout.split():
+            return int(cp.stdout.split()[0])
+    except Exception:
+        pass
     total = 0
+    deadline = time.monotonic() + 15
+    files_seen = 0
     for dp, _, fns in os.walk(root):
         for fn in fns:
             try:
                 total += (Path(dp) / fn).stat().st_size
+                files_seen += 1
             except OSError:
                 pass
+            if files_seen >= 50000 or time.monotonic() > deadline:
+                return total
     return total
 
 
