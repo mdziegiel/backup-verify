@@ -9,6 +9,7 @@ It does the part most backup systems avoid saying out loud: it checks whether th
 - Single Docker container on port `10122`.
 - Dashboard schedule management with enable/disable, daily/weekly/monthly visual cron builder, next-run display, per-client Run Now, and Run All Clients.
 - Persistent SQLite history for all verification runs, client details, disk metrics, notification attempts, trend data, and exports.
+- Clients Management UI backed by SQLite: add, edit, enable/disable, or remove backup clients without editing config files or restarting the container.
 - UrBackup latest-backup discovery for configured clients.
 - File backup spot checks with configurable random sample size.
 - Critical path verification for `Windows`, `Users`, `Program Files`, and `ProgramData` by default.
@@ -35,7 +36,7 @@ It does the part most backup systems avoid saying out loud: it checks whether th
 - Backup storage: `/mnt/qnap-backups/urbackup` mounted read-only
 - QNAP: `https://10.10.10.230`
 - Proxmox: `https://10.10.10.251:8006`
-- Clients: `MichaelD-ASUS`, `MichaelD-Lenovo`
+- Initial clients: `MichaelD-ASUS`, `MichaelD-Lenovo`, seeded into SQLite on first start and then managed from the dashboard.
 
 ## NOC Dashboard output
 
@@ -81,6 +82,10 @@ curl http://127.0.0.1:10122/api/health
 - `GET /api/history.csv`
 - `GET /api/history.pdf`
 - `GET /api/results.json`
+- `GET /api/clients`
+- `POST /api/clients`
+- `PUT /api/clients/{id}`
+- `DELETE /api/clients/{id}`
 - `POST /api/run` with optional `{"clients":["MichaelD-ASUS"]}`
 - `POST /api/settings`
 - `POST /api/test-notification` with `{"channel":"telegram|email|gotify|all"}`

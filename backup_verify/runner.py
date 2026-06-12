@@ -16,6 +16,36 @@ class VerificationRunner:
     def current_settings(self):
         return self.settings_provider()
 
+    def client_configs(self, requested=None):
+        saved = self.db.list_clients(active_only=requested is None) if hasattr(self.db, 'list_clients') else []
+        if requested is not None:
+            wanted = {str(x) for x in requested}
+            by_name = {c['name']: c for c in saved}
+            by_api = {c.get('urbackup_client_name') or c['name']: c for c in saved}
+            out = []
+            settings = self.current_settings()
+            for name in requested:
+                out.append(by_name.get(str(name)) or by_api.get(str(name)) or {
+                    'name': str(name),
+                    'backup_root': str(settings.backup_root),
+                    'urbackup_client_name': str(name),
+                    'sample_size': settings.sample_size,
+                    'backup_age_threshold_days': settings.backup_age_threshold_days,
+                    'enabled': True,
+                })
+            return out
+        if saved:
+            return saved
+        settings = self.current_settings()
+        return [{
+            'name': name,
+            'backup_root': str(settings.backup_root),
+            'urbackup_client_name': name,
+            'sample_size': settings.sample_size,
+            'backup_age_threshold_days': settings.backup_age_threshold_days,
+            'enabled': True,
+        } for name in settings.clients]
+
     def run(self, clients=None, notify=True):
         if not self.lock.acquire(blocking=False):
             raise RuntimeError('verification already running')
@@ -25,9 +55,10 @@ class VerificationRunner:
             started = datetime.now(timezone.utc).replace(microsecond=0).isoformat()
             rid = self.db.create_run(started)
             p = {'run_id': rid, 'started_at': started, 'clients': {}, 'disk_health': {}, 'qnap_health': {}, 'b2': {}}
-            for client in (clients or settings.clients):
+            for client in self.client_configs(clients):
                 r = verify_client(settings, client, self.db)
-                p['clients'][client] = {k: v for k, v in r.items() if k != 'client'}
+                client_name = r.get('client') or client.get('name')
+                p['clients'][client_name] = {k: v for k, v in r.items() if k != 'client'}
                 self.db.add_client_result(rid, r)
             dh = check_smart(settings, self.db)
             p['disk_health'] = dh

@@ -67,33 +67,55 @@ def backup_time(path):
         return datetime.now(timezone.utc)
 
 
+def normalize_client_config(settings, client):
+    if isinstance(client, dict):
+        name = str(client.get('name') or client.get('client') or client.get('urbackup_client_name') or '').strip()
+        api_name = str(client.get('urbackup_client_name') or name).strip() or name
+        backup_root = Path(client.get('backup_root') or settings.backup_root)
+        try:
+            sample_size = max(1, int(client.get('sample_size') or settings.sample_size))
+        except Exception:
+            sample_size = settings.sample_size
+        try:
+            age_days = max(1, int(client.get('backup_age_threshold_days') or settings.backup_age_threshold_days))
+        except Exception:
+            age_days = settings.backup_age_threshold_days
+        return {'name': name, 'api_name': api_name, 'backup_root': backup_root, 'sample_size': sample_size, 'backup_age_threshold_days': age_days}
+    name = str(client)
+    return {'name': name, 'api_name': name, 'backup_root': settings.backup_root, 'sample_size': settings.sample_size, 'backup_age_threshold_days': settings.backup_age_threshold_days}
+
+
 def verify_client(settings, client, db=None):
+    cfg = normalize_client_config(settings, client)
+    client_name = cfg['name']
+    api_name = cfg['api_name']
+    backup_root = cfg['backup_root']
     warnings = []
     errors = []
     file_failures = []
     checked = failed = matches = missing = 0
     try:
-        api = UrBackupClient(settings.urbackup_url, settings.urbackup_username, settings.urbackup_password).latest_successful_backup(client)
+        api = UrBackupClient(settings.urbackup_url, settings.urbackup_username, settings.urbackup_password).latest_successful_backup(api_name)
         warnings += api.get('warnings', [])
     except Exception as e:
         api = {}
         warnings.append(f'UrBackup API failed: {type(e).__name__}: {e}')
-    root = find_client_root(settings.backup_root, client)
+    root = find_client_root(backup_root, api_name) or (find_client_root(backup_root, client_name) if api_name != client_name else None)
     if not root:
-        return {'client': client, 'status': 'failed', 'last_checked': now_iso(), 'files_checked': 0, 'files_failed': 1, 'warnings': warnings, 'errors': [f'No backup directory for {client} under {settings.backup_root}'], 'file_failures': [], 'api': api}
+        return {'client': client_name, 'urbackup_client_name': api_name, 'status': 'failed', 'last_checked': now_iso(), 'files_checked': 0, 'files_failed': 1, 'warnings': warnings, 'errors': [f'No backup directory for {api_name} under {backup_root}'], 'file_failures': [], 'api': api}
     latest = find_latest_backup_dir(root)
     dirs = backup_dirs(root)
     latest_time = backup_time(latest)
     age_days = (datetime.now(timezone.utc) - latest_time).total_seconds() / 86400
-    if age_days > settings.backup_age_threshold_days:
-        warnings.append(f'Latest backup is {age_days:.1f} days old; threshold is {settings.backup_age_threshold_days} days')
+    if age_days > cfg['backup_age_threshold_days']:
+        warnings.append(f"Latest backup is {age_days:.1f} days old; threshold is {cfg['backup_age_threshold_days']} days")
     if len(dirs) < settings.retention_min_copies:
         warnings.append(f'Retention policy warning: found {len(dirs)} backup copies, expected at least {settings.retention_min_copies}')
     manifest = load_checksum_manifest(latest)
     for c in settings.critical_paths:
         if not any((latest / x).exists() for x in [c, c.lower(), c.upper()]):
             warnings.append(f'Critical path missing: {c}')
-    samples = random_files(latest, settings.sample_size)
+    samples = random_files(latest, cfg['sample_size'])
     restore_drill = {'status': 'skipped', 'reason': 'no sample file'}
     for p in samples:
         checked += 1
@@ -133,14 +155,15 @@ def verify_client(settings, client, db=None):
     if not imgs:
         warnings.append('No VHD/VHDX/raw image backup found')
     size = dir_size(latest)
-    prev = db.previous_client_details(client) if db else None
+    prev = db.previous_client_details(client_name) if db else None
     if prev and prev.get('backup_size_bytes'):
         old = int(prev['backup_size_bytes'])
         if old > 0 and size < old * (1 - settings.size_drop_threshold_percent / 100):
             warnings.append(f'Backup size dropped from {human_bytes(old)} to {human_bytes(size)} (> {settings.size_drop_threshold_percent}% drop)')
     status = 'failed' if failed else ('warning' if warnings else 'verified')
     return {
-        'client': client,
+        'client': client_name,
+        'urbackup_client_name': api_name,
         'status': status,
         'last_checked': now_iso(),
         'backup_path': str(latest),

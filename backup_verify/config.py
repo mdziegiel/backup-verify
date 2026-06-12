@@ -42,6 +42,49 @@ def load_env_file(path):
     return out
 
 
+def parse_offsite_providers(value):
+    if not value:
+        return []
+    if isinstance(value, list):
+        raw = value
+    else:
+        try:
+            raw = __import__('json').loads(str(value))
+        except Exception:
+            return []
+    out = []
+    for item in raw if isinstance(raw, list) else []:
+        if not isinstance(item, dict):
+            continue
+        cfg = item.get('config') if isinstance(item.get('config'), dict) else {}
+        out.append({
+            'id': str(item.get('id') or ''),
+            'type': str(item.get('type') or ''),
+            'name': str(item.get('name') or ''),
+            'enabled': as_bool(item.get('enabled'), False),
+            'expanded': as_bool(item.get('expanded'), False),
+            'config': {str(k): '' if v is None else str(v) for k, v in cfg.items()},
+        })
+    return out
+
+OFFSITE_SECRET_FIELDS = {
+    'keyId','applicationKey','accessKeyId','secretAccessKey','accountKey','serviceAccountJson',
+    'privateKey','password','username'
+}
+
+def mask_offsite_providers(providers):
+    safe = []
+    for item in providers or []:
+        clone = dict(item)
+        cfg = dict(clone.get('config') or {})
+        for k, v in list(cfg.items()):
+            if k in OFFSITE_SECRET_FIELDS:
+                cfg[k] = 'configured' if v else ''
+        clone['config'] = cfg
+        safe.append(clone)
+    return safe
+
+
 @dataclass(frozen=True)
 class Settings:
     host: str
@@ -99,6 +142,7 @@ class Settings:
     b2_application_key: str
     b2_bucket_name: str
     b2_behind_days: int
+    offsite_providers: list
 
     @classmethod
     def from_env(cls):
@@ -164,6 +208,7 @@ class Settings:
             get('B2_APPLICATION_KEY'),
             get('B2_BUCKET_NAME'),
             as_int(get('B2_BEHIND_DAYS', '2'), 2, 1, 365),
+            parse_offsite_providers(get('OFFSITE_PROVIDERS', '')),
         )
 
     def tz(self):
@@ -173,6 +218,7 @@ class Settings:
         safe = self.__dict__.copy()
         for key in ['telegram_bot_token','smtp_password','gotify_token','b2_key_id','b2_application_key','urbackup_password','qnap_password','proxmox_token_secret']:
             safe[key] = 'configured' if safe.get(key) else ''
+        safe['offsite_providers'] = mask_offsite_providers(safe.get('offsite_providers') or [])
         safe['backup_root'] = str(self.backup_root)
         safe['results_file'] = str(self.results_file)
         safe['data_dir'] = str(self.data_dir)
@@ -198,6 +244,8 @@ class Settings:
                 vals[k] = split_csv(v if isinstance(v, str) else ','.join(v), getattr(self, k))
             elif k in paths:
                 vals[k] = Path(v)
+            elif k == 'offsite_providers':
+                vals[k] = parse_offsite_providers(v)
             else:
                 vals[k] = v
         return replace(self, **vals)

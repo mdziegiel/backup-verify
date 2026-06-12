@@ -21,6 +21,7 @@ class Database:
             'CREATE TABLE IF NOT EXISTS disk_results(id INTEGER PRIMARY KEY AUTOINCREMENT, run_id INTEGER NOT NULL, name TEXT NOT NULL, status TEXT NOT NULL, temperature INTEGER, reallocated INTEGER, pending INTEGER, uncorrectable INTEGER, power_on_hours INTEGER, details TEXT NOT NULL DEFAULT "{}")',
             'CREATE TABLE IF NOT EXISTS settings(key TEXT PRIMARY KEY, value TEXT NOT NULL)',
             'CREATE TABLE IF NOT EXISTS notifications(id INTEGER PRIMARY KEY AUTOINCREMENT, created_at TEXT NOT NULL, channel TEXT NOT NULL, status TEXT NOT NULL, details TEXT NOT NULL DEFAULT "{}")',
+            'CREATE TABLE IF NOT EXISTS clients(id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL UNIQUE, backup_root TEXT NOT NULL DEFAULT "/mnt/qnap-backups/urbackup", urbackup_client_name TEXT NOT NULL DEFAULT "", sample_size INTEGER NOT NULL DEFAULT 87, backup_age_threshold_days INTEGER NOT NULL DEFAULT 2, enabled INTEGER NOT NULL DEFAULT 1, created_at TEXT NOT NULL, updated_at TEXT NOT NULL)',
         ]
         with self.connect() as con:
             for s in schema:
@@ -87,6 +88,85 @@ class Database:
     def load_settings(self):
         with self.connect() as con:
             return {r['key']: r['value'] for r in con.execute('SELECT key,value FROM settings')}
+
+    def seed_clients_from_settings(self, settings):
+        now = datetime.now(timezone.utc).replace(microsecond=0).isoformat()
+        with self.lock, self.connect() as con:
+            count = con.execute('SELECT COUNT(*) c FROM clients').fetchone()['c']
+            if count:
+                return
+            for name in settings.clients:
+                con.execute("""INSERT INTO clients(name,backup_root,urbackup_client_name,sample_size,backup_age_threshold_days,enabled,created_at,updated_at)
+                               VALUES (?,?,?,?,?,?,?,?)
+                               ON CONFLICT(name) DO NOTHING""",
+                            (name, str(settings.backup_root), name, int(settings.sample_size), int(settings.backup_age_threshold_days), 1, now, now))
+            con.commit()
+
+    def list_clients(self, active_only=False):
+        q = 'SELECT id,name,backup_root,urbackup_client_name,sample_size,backup_age_threshold_days,enabled,created_at,updated_at FROM clients'
+        if active_only:
+            q += ' WHERE enabled=1'
+        q += ' ORDER BY name'
+        with self.connect() as con:
+            rows = [dict(r) for r in con.execute(q)]
+        for r in rows:
+            r['enabled'] = bool(r.get('enabled'))
+            r['sample_size'] = int(r.get('sample_size') or 87)
+            r['backup_age_threshold_days'] = int(r.get('backup_age_threshold_days') or 2)
+            if not r.get('urbackup_client_name'):
+                r['urbackup_client_name'] = r['name']
+        return rows
+
+    def get_client(self, client_id):
+        with self.connect() as con:
+            r = con.execute('SELECT id,name,backup_root,urbackup_client_name,sample_size,backup_age_threshold_days,enabled,created_at,updated_at FROM clients WHERE id=?', (client_id,)).fetchone()
+        if not r:
+            return None
+        d = dict(r); d['enabled'] = bool(d.get('enabled'))
+        if not d.get('urbackup_client_name'):
+            d['urbackup_client_name'] = d['name']
+        return d
+
+    def save_client(self, data, client_id=None):
+        name = str(data.get('name') or '').strip()
+        if not name:
+            raise ValueError('client name is required')
+        backup_root = str(data.get('backup_root') or '/mnt/qnap-backups/urbackup').strip() or '/mnt/qnap-backups/urbackup'
+        urbackup_client_name = str(data.get('urbackup_client_name') or name).strip() or name
+        def to_int(value, default, lo, hi):
+            try:
+                n = int(value)
+            except Exception:
+                n = default
+            return max(lo, min(hi, n))
+        sample_size = to_int(data.get('sample_size'), 87, 1, 5000)
+        age_days = to_int(data.get('backup_age_threshold_days'), 2, 1, 3650)
+        enabled = 1 if str(data.get('enabled', True)).lower() not in {'0','false','no','off','disabled'} else 0
+        now = datetime.now(timezone.utc).replace(microsecond=0).isoformat()
+        with self.lock, self.connect() as con:
+            if client_id:
+                cur = con.execute("""UPDATE clients SET name=?,backup_root=?,urbackup_client_name=?,sample_size=?,backup_age_threshold_days=?,enabled=?,updated_at=? WHERE id=?""",
+                                  (name, backup_root, urbackup_client_name, sample_size, age_days, enabled, now, client_id))
+                if cur.rowcount == 0:
+                    raise KeyError('client not found')
+            else:
+                cur = con.execute("""INSERT INTO clients(name,backup_root,urbackup_client_name,sample_size,backup_age_threshold_days,enabled,created_at,updated_at)
+                                     VALUES (?,?,?,?,?,?,?,?)
+                                     ON CONFLICT(name) DO UPDATE SET backup_root=excluded.backup_root,urbackup_client_name=excluded.urbackup_client_name,sample_size=excluded.sample_size,backup_age_threshold_days=excluded.backup_age_threshold_days,enabled=excluded.enabled,updated_at=excluded.updated_at""",
+                                  (name, backup_root, urbackup_client_name, sample_size, age_days, enabled, now, now))
+                if cur.lastrowid:
+                    client_id = int(cur.lastrowid)
+                else:
+                    row = con.execute('SELECT id FROM clients WHERE name=?', (name,)).fetchone()
+                    client_id = int(row['id'])
+            con.commit()
+        return self.get_client(client_id)
+
+    def delete_client(self, client_id):
+        with self.lock, self.connect() as con:
+            cur = con.execute('DELETE FROM clients WHERE id=?', (client_id,))
+            con.commit()
+            return cur.rowcount > 0
 
     def latest_client_results(self):
         q = '''SELECT cr.* FROM client_results cr

@@ -35,6 +35,28 @@
       <div id="clients" class="cards"></div>
     </section>
 
+    <section class="panel wide" id="clientManagementPanel">
+      <div class="section-head"><h2>Clients Management</h2><button id="newClient" type="button">New client</button></div>
+      <p class="tiny">Add, edit, disable, or remove monitored backup clients. Saved in SQLite. No config edits. No container restart. Civilization advances one checkbox at a time.</p>
+      <div class="settings-grid clients-admin-grid">
+        <form id="clientForm" class="settings-card">
+          <h3 id="clientFormTitle">Add client</h3>
+          <input type="hidden" name="id">
+          <label>Client name<input name="name" placeholder="MichaelD-ASUS" required></label>
+          <label>Backup root path<input name="backup_root" value="/mnt/qnap-backups/urbackup"></label>
+          <label>UrBackup client name<input name="urbackup_client_name" placeholder="Name used by UrBackup API"></label>
+          <label>Sample size<input name="sample_size" type="number" min="1" max="5000" value="87"></label>
+          <label>Backup age warning threshold days<input name="backup_age_threshold_days" type="number" min="1" max="3650" value="2"></label>
+          <label><input type="checkbox" name="enabled" checked> Enabled</label>
+          <div class="row-actions"><button type="submit">Save client</button><button id="cancelClientEdit" type="button">Cancel</button></div>
+        </form>
+        <div class="settings-card client-admin-list">
+          <h3>Existing clients</h3>
+          <div id="clientAdmin"></div>
+        </div>
+      </div>
+    </section>
+
     <section class="panel wide settings-panel">
       <h2>Settings</h2>
       <div class="settings-grid">
@@ -101,19 +123,20 @@
       </div>
     </section>
 
-    <section class="panel wide">
-      <h2>Backblaze B2</h2>
-      <div class="settings-grid">
-        <form id="b2Form" class="settings-card">
-          <label><input type="checkbox" name="b2_enabled"> Enabled</label>
-          <label>Key ID<input name="b2_key_id" type="password"></label>
-          <label>Application key<input name="b2_application_key" type="password"></label>
-          <label>Bucket name<input name="b2_bucket_name"></label>
-          <label>Behind threshold days<input name="b2_behind_days" type="number"></label>
-          <button type="submit">Save B2 settings</button>
-        </form>
-        <div id="b2Status" class="settings-card"></div>
+    <section class="panel wide offsite-panel">
+      <div class="section-head offsite-titlebar">
+        <div>
+          <p class="eyebrow">Enterprise offsite storage</p>
+          <h2>Offsite Storage Providers</h2>
+          <p class="tiny">Configure independent cloud, object, SSH, rclone, and WebDAV targets. Disabled providers stay preserved in the vault.</p>
+        </div>
+        <div class="add-provider-wrap">
+          <select id="providerType" aria-label="Provider type"></select>
+          <button id="addProvider" type="button">Add Provider</button>
+        </div>
       </div>
+      <div id="offsiteSummary" class="offsite-summary-banner"></div>
+      <div id="offsiteProviders" class="offsite-provider-list"></div>
     </section>
 
     <section class="panel wide">
