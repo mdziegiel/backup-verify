@@ -62,14 +62,34 @@ def backup_dirs(root):
 def load_checksum_manifest(root):
     m = {}
     names = {'hashes.txt', 'checksums.txt', 'sha256sums.txt', 'SHA256SUMS'}
-    for dp, _, fns in os.walk(root):
+    root = Path(root)
+    candidates = []
+    for name in names:
+        if (root / name).exists():
+            candidates.append(root / name)
+    # Search only a bounded shallow sample. Full recursive manifest discovery on image backups is a denial-of-service with nicer branding.
+    deadline = time.monotonic() + 8
+    dirs_seen = 0
+    for dp, dirs, fns in os.walk(root):
+        dirs_seen += 1
+        depth = len(Path(dp).relative_to(root).parts)
+        if depth > 2:
+            dirs[:] = []
+            continue
         for fn in fns:
-            if fn in names or fn.lower().endswith(('.sha256', '.md5')):
-                p = Path(dp) / fn
-                for line in p.read_text(errors='ignore').splitlines():
-                    mm = re.match(r'^([a-fA-F0-9]{32,64})\s+[* ]?(.+)$', line.strip())
-                    if mm:
-                        m[str((p.parent / mm.group(2)).resolve())] = mm.group(1).lower()
+            low = fn.lower()
+            if fn in names or low.endswith(('.sha256', '.md5')):
+                candidates.append(Path(dp) / fn)
+        if dirs_seen >= 500 or time.monotonic() > deadline:
+            break
+    for p in candidates[:50]:
+        try:
+            for line in p.read_text(errors='ignore').splitlines()[:200000]:
+                mm = re.match(r'^([a-fA-F0-9]{32,64})\s+[* ]?(.+)$', line.strip())
+                if mm:
+                    m[str((p.parent / mm.group(2)).resolve())] = mm.group(1).lower()
+        except Exception:
+            pass
     return m
 
 
