@@ -218,6 +218,30 @@ class Database:
                 }
         return out
 
+    def weekly_summary_data(self):
+        since = (datetime.now(timezone.utc) - timedelta(days=7)).isoformat()
+        with self.connect() as con:
+            runs = [dict(r) for r in con.execute('SELECT id,started_at,finished_at,status,summary FROM runs WHERE started_at>=? ORDER BY id DESC', (since,)).fetchall()]
+            clients = [dict(r) for r in con.execute('SELECT client,status,last_checked,files_checked,files_failed,warnings,details FROM client_results WHERE last_checked>=? ORDER BY client,last_checked DESC', (since,)).fetchall()]
+            disks = [dict(r) for r in con.execute('SELECT name,status,temperature,reallocated,pending,uncorrectable,power_on_hours,details FROM disk_results ORDER BY id DESC LIMIT 100').fetchall()]
+        by_client = {}
+        for r in clients:
+            c = by_client.setdefault(r['client'], {'runs': 0, 'verified': 0, 'warning': 0, 'failed': 0, 'files_checked': 0, 'files_failed': 0, 'last_status': r['status'], 'last_checked': r['last_checked'], 'last_successful_backup': None, 'latest_details': {}})
+            c['runs'] += 1
+            if r['status'] in ('verified','warning','failed'):
+                c[r['status']] += 1
+            c['files_checked'] += int(r.get('files_checked') or 0)
+            c['files_failed'] += int(r.get('files_failed') or 0)
+            if not c.get('latest_details'):
+                try: c['latest_details'] = json.loads(r.get('details') or '{}')
+                except Exception: c['latest_details'] = {}
+            det = c.get('latest_details') or {}
+            if not c.get('last_successful_backup') and r['status'] == 'verified':
+                c['last_successful_backup'] = det.get('latest_backup_time') or r.get('last_checked')
+        for c in by_client.values():
+            c['success_rate'] = round((c['verified'] / c['runs']) * 100, 1) if c['runs'] else None
+        return {'since': since, 'runs': runs, 'clients': by_client, 'disks': disks}
+
     def disk_trends(self):
         with self.connect() as con:
             rows = con.execute('SELECT name,status,temperature,reallocated,pending,uncorrectable,power_on_hours,details FROM disk_results ORDER BY id DESC LIMIT 200').fetchall()

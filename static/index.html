@@ -103,6 +103,14 @@
           <label>To address<input name="smtp_to"></label>
           <button type="submit">Save Email</button><button type="button" data-test="email">Test</button>
         </form>
+        <form id="weeklySummaryForm" class="settings-card">
+          <h3>Weekly email summary</h3>
+          <label><input type="checkbox" name="weekly_summary_enabled"> Enabled</label>
+          <label>Day of week<select name="weekly_summary_day_of_week"><option value="0">Sunday</option><option value="1">Monday</option><option value="2">Tuesday</option><option value="3">Wednesday</option><option value="4">Thursday</option><option value="5">Friday</option><option value="6">Saturday</option></select></label>
+          <label>Time<input name="weekly_summary_time" type="time"></label>
+          <p class="tiny">Default is Monday morning. Uses SMTP settings above.</p>
+          <button type="submit">Save summary schedule</button><button type="button" id="testWeeklySummary">Send now</button>
+        </form>
         <form id="gotifyForm" class="settings-card">
           <h3>Gotify</h3>
           <label><input type="checkbox" name="gotify_enabled"> Enabled</label>
@@ -142,6 +150,11 @@
     <section class="panel wide">
       <h2>Disk health</h2>
       <div id="disks" class="cards"></div>
+    </section>
+
+    <section class="panel wide">
+      <h2>QNAP volume health</h2>
+      <div id="qnap" class="cards"></div>
     </section>
 
     <section class="panel wide">

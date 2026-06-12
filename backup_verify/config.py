@@ -137,6 +137,10 @@ class Settings:
     notify_on_disk_health_change: bool
     quiet_hours_start: str
     quiet_hours_end: str
+    weekly_summary_enabled: bool
+    weekly_summary_day_of_week: int
+    weekly_summary_time: str
+    weekly_summary_last_sent: str
     b2_enabled: bool
     b2_key_id: str
     b2_application_key: str
@@ -203,6 +207,10 @@ class Settings:
             as_bool(get('NOTIFY_ON_DISK_HEALTH_CHANGE', 'true'), True),
             get('QUIET_HOURS_START', ''),
             get('QUIET_HOURS_END', ''),
+            as_bool(get('WEEKLY_SUMMARY_ENABLED', 'true'), True),
+            as_int(get('WEEKLY_SUMMARY_DAY_OF_WEEK', '1'), 1, 0, 6),
+            get('WEEKLY_SUMMARY_TIME', '08:00'),
+            get('WEEKLY_SUMMARY_LAST_SENT', ''),
             as_bool(get('B2_ENABLED', 'false'), False),
             get('B2_KEY_ID'),
             get('B2_APPLICATION_KEY'),
@@ -229,8 +237,8 @@ class Settings:
         if not overrides:
             return self
         vals = {}
-        bools = {'schedule_enabled','telegram_enabled','smtp_enabled','gotify_enabled','notify_on_completion','notify_on_failure_only','notify_on_warning','notify_on_disk_health_change','b2_enabled'}
-        ints = {'sample_size','backup_age_threshold_days','size_drop_threshold_percent','retention_min_copies','smtp_port','b2_behind_days','schedule_day_of_week','schedule_day_of_month'}
+        bools = {'schedule_enabled','telegram_enabled','smtp_enabled','gotify_enabled','notify_on_completion','notify_on_failure_only','notify_on_warning','notify_on_disk_health_change','weekly_summary_enabled','b2_enabled'}
+        ints = {'sample_size','backup_age_threshold_days','size_drop_threshold_percent','retention_min_copies','smtp_port','b2_behind_days','schedule_day_of_week','schedule_day_of_month','weekly_summary_day_of_week'}
         lists = {'clients','critical_paths','smart_devices'}
         paths = {'backup_root','results_file','db_path','data_dir'}
         for k, v in overrides.items():

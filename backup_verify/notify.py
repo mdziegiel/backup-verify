@@ -122,3 +122,29 @@ def format_summary(p):
             if d.get('status') != 'healthy':
                 lines.append(f"Drive {d.get('name')}: {d.get('status')} temp={d.get('temperature')} realloc={d.get('reallocated')} pending={d.get('pending')}")
     return '\n'.join(lines)[:3900]
+
+
+def format_weekly_summary(data):
+    lines = ['Backup Verify weekly summary', f"Window start: {data.get('since')}", f"Runs this week: {len(data.get('runs') or [])}"]
+    for name, c in sorted((data.get('clients') or {}).items()):
+        rate = 'n/a' if c.get('success_rate') is None else f"{c.get('success_rate')}%"
+        det = c.get('latest_details') or {}
+        lines.append(f"{name}: last={c.get('last_status')} success_rate={rate} files_failed={c.get('files_failed',0)} latest_backup={det.get('latest_backup_time') or c.get('last_successful_backup') or 'unknown'} size={det.get('backup_size_human') or 'unknown'}")
+        failures = det.get('file_failures') or []
+        for f in failures[:3]:
+            lines.append(f"  file failure: {f.get('file')} - {f.get('reason')}")
+    failed_disks = [d for d in (data.get('disks') or []) if d.get('status') not in ('healthy','verified')]
+    lines.append(f"Disk issues: {len(failed_disks)}")
+    for d in failed_disks[:8]:
+        lines.append(f"{d.get('name')}: {d.get('status')} temp={d.get('temperature')} realloc={d.get('reallocated')} pending={d.get('pending')} uncorrectable={d.get('uncorrectable')}")
+    return '\n'.join(lines)[:3900]
+
+
+def send_weekly_email_summary(settings, data, db=None, force=False):
+    if not force and not getattr(settings, 'weekly_summary_enabled', False):
+        return {'sent': False, 'reason': 'weekly summary disabled'}
+    text = format_weekly_summary(data)
+    result = send_email(settings, 'Backup Verify weekly summary', text)
+    if db:
+        db.add_notification('weekly_email', 'sent' if result.get('sent') else 'skipped', result)
+    return result

@@ -2,12 +2,12 @@ import csv, io, json, threading, time, urllib.parse, urllib.request, socket, sub
 from dataclasses import replace
 from http.server import ThreadingHTTPServer, SimpleHTTPRequestHandler
 from pathlib import Path
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from .config import Settings, cron_from_visual
 from .db import Database
 from .runner import VerificationRunner
 from .scheduler import next_run_from_cron
-from .notify import send_all
+from .notify import send_all, send_weekly_email_summary
 
 def make_simple_pdf(lines):
     safe_lines = []
@@ -227,6 +227,44 @@ def schedule_state():
     return _next
 
 
+
+def weekly_summary_due(settings, now=None):
+    if not settings.weekly_summary_enabled:
+        return False
+    now = now or datetime.now(settings.tz())
+    due_dow = (int(settings.weekly_summary_day_of_week) - 1) % 7  # UI/env uses 0=Sunday, 1=Monday; Python uses Monday=0
+    if now.weekday() != due_dow:
+        return False
+    try:
+        hh, mm = [int(x) for x in str(settings.weekly_summary_time or '08:00').split(':', 1)]
+    except Exception:
+        hh, mm = 8, 0
+    scheduled = now.replace(hour=hh, minute=mm, second=0, microsecond=0)
+    if now < scheduled or now >= scheduled + timedelta(minutes=30):
+        return False
+    last = settings.weekly_summary_last_sent
+    if last:
+        try:
+            last_dt = datetime.fromisoformat(str(last).replace('Z', '+00:00'))
+            if last_dt.astimezone(settings.tz()).date() == now.date():
+                return False
+        except Exception:
+            pass
+    return True
+
+
+def run_weekly_summary(force=False):
+    s = current_settings()
+    if not force and not weekly_summary_due(s):
+        return {'sent': False, 'reason': 'not due'}
+    data = db.weekly_summary_data()
+    result = send_weekly_email_summary(s, data, db, force=force)
+    if result.get('sent'):
+        sent_at = datetime.now(timezone.utc).replace(microsecond=0).isoformat()
+        db.save_settings({'weekly_summary_last_sent': sent_at})
+        result['sent_at'] = sent_at
+    return result
+
 def loop():
     global _next
     while True:
@@ -237,6 +275,8 @@ def loop():
             if now >= nxt and not runner.running:
                 threading.Thread(target=lambda: runner.run(notify=True), daemon=True).start()
                 _next = next_run_from_cron(s.schedule, s.tz())
+        if weekly_summary_due(s):
+            threading.Thread(target=lambda: run_weekly_summary(force=False), daemon=True).start()
         time.sleep(30)
 
 
@@ -271,7 +311,7 @@ class Handler(SimpleHTTPRequestHandler):
             latest = db.latest_payload()
             client_configs = db.list_clients(active_only=False)
             names = [c['name'] for c in client_configs]
-            return self.j({'running': runner.running, 'next_run': nxt.isoformat() if nxt else None, 'latest': latest, 'settings': s.public_dict(), 'clients': db.client_summary(names), 'client_configs': client_configs, 'disk_trends': db.disk_trends()})
+            return self.j({'running': runner.running, 'next_run': nxt.isoformat() if nxt else None, 'weekly_summary_due': weekly_summary_due(s), 'latest': latest, 'settings': s.public_dict(), 'clients': db.client_summary(names), 'client_configs': client_configs, 'disk_trends': db.disk_trends()})
         if p == '/api/clients':
             return self.j({'clients': db.list_clients(active_only=False)})
         if p == '/api/history':
@@ -352,6 +392,9 @@ class Handler(SimpleHTTPRequestHandler):
             overrides = {'telegram_enabled': channel == 'telegram', 'smtp_enabled': channel == 'email', 'gotify_enabled': channel == 'gotify'}
             ss = s.effective(overrides)
             return self.j(send_all(ss, fake, text, db, force=True))
+        if p == '/api/weekly-summary':
+            b = self.body()
+            return self.j(run_weekly_summary(force=bool(b.get('force'))))
         return self.j({'error': 'not found'}, 404)
 
     def do_PUT(self):

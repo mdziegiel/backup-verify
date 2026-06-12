@@ -66,6 +66,14 @@ function chart(points){
   const xy = vals.map((v,i)=>`${(i/(vals.length-1))*100},${40-(v/max)*36}`).join(' ');
   return `<svg class="chart" viewBox="0 0 100 42" preserveAspectRatio="none"><polyline points="${xy}" /></svg>`;
 }
+function tempChart(points){
+  const rows = (points || []).map(p => Number(p.temperature)).filter(v => !Number.isNaN(v) && v > 0).slice(-30);
+  if(rows.length < 2) return '<p class="tiny">No temperature trend yet.</p>';
+  const min = Math.min(...rows,20), max = Math.max(...rows,60);
+  const span = Math.max(1, max-min);
+  const xy = rows.map((v,i)=>`${(i/(rows.length-1))*100},${40-((v-min)/span)*36}`).join(' ');
+  return `<svg class="chart temp" viewBox="0 0 100 42" preserveAspectRatio="none"><polyline points="${xy}" /></svg><p class="tiny">Temperature trend ${Math.min(...rows)}°C-${Math.max(...rows)}°C</p>`;
+}
 function formData(form){
   const o = {};
   [...new FormData(form).entries()].forEach(([k,v]) => o[k]=v);
@@ -300,7 +308,7 @@ async function load(){
   $('#nextRun').textContent = status.next_run || 'disabled';
   $('#running').textContent = status.running ? 'yes' : 'no';
   $('#backupRoot').textContent = settings.backup_root || '—';
-  ['#scheduleForm','#verifyForm','#telegramForm','#emailForm','#gotifyForm','#triggerForm'].forEach(id => fillForm(id, settings));
+  ['#scheduleForm','#verifyForm','#telegramForm','#emailForm','#weeklySummaryForm','#gotifyForm','#triggerForm'].forEach(id => fillForm(id, settings));
 
   const clients = latest.clients || {};
   const summaries = status.clients || {};
@@ -325,8 +333,12 @@ async function load(){
   }).join('') || '<p class="tiny">No clients configured.</p>';
 
   const dh = latest.disk_health || {};
+  const trends = status.disk_trends || {};
   $('#disks').innerHTML = `<article class="card"><h3>Summary</h3><div class="status ${cls(dh.status)}">${esc(dh.status || 'unknown')}</div>${metric('Drives checked', dh.drives_checked)}${metric('Drives failed', dh.drives_failed)}</article>` +
-    (dh.drives || []).map(d => `<article class="card"><h3>${esc(d.name)}</h3><div class="status ${cls(d.status)}">${esc(d.status)}</div>${metric('Type', d.type)}${metric('Temp', d.temperature == null ? '—' : d.temperature + '°C')}${metric('Reallocated', d.reallocated)}${metric('Pending', d.pending)}${metric('Uncorrectable/media errors', d.uncorrectable)}${metric('NVMe used', d.percentage_used == null ? '—' : d.percentage_used + '%')}<p class="tiny">${(d.warnings||[]).map(esc).join('<br>')}</p></article>`).join('');
+    (dh.drives || []).map(d => `<article class="card"><h3>${esc(d.name)}</h3><div class="status ${cls(d.status)}">${esc(d.status)}</div>${metric('Type', d.type)}${metric('Temp', d.temperature == null ? '—' : d.temperature + '°C')}${metric('Reallocated', d.reallocated)}${metric('Pending', d.pending)}${metric('Uncorrectable/media errors', d.uncorrectable)}${metric('NVMe used', d.percentage_used == null ? '—' : d.percentage_used + '%')}<h4>Drive temperature graph</h4>${tempChart(trends[d.name] || [])}<p class="tiny">${(d.warnings||[]).map(esc).join('<br>')}</p></article>`).join('');
+
+  const qh = latest.qnap_health || {};
+  $('#qnap').innerHTML = `<article class="card"><h3>10.10.10.230</h3><div class="status ${cls(qh.status)}">${esc(qh.status || 'unknown')}</div>${(qh.volumes||[]).map(v => `<div class="metric"><span>${esc(v.name || 'volume')}</span><strong>${esc(v.status || 'unknown')}</strong></div>`).join('') || '<p class="tiny">No QNAP volume telemetry returned.</p>'}<p class="tiny">${(qh.warnings||[]).map(esc).join('<br>') || 'No warnings.'}</p></article>`;
 
   renderClientAdmin();
   renderOffsite();
@@ -337,7 +349,8 @@ async function runClient(name){ toast('Starting ' + name); await post('/api/run'
 $('#runAll')?.addEventListener('click', async () => { toast('Starting all clients'); await post('/api/run',{}); setTimeout(load,1200); });
 $('#refresh')?.addEventListener('click', load);
 $$('[data-test]').forEach(b => b.addEventListener('click', async () => { const r = await post('/api/test-notification',{channel:b.dataset.test}); toast(JSON.stringify(r).slice(0,160)); }));
-['#scheduleForm','#verifyForm','#telegramForm','#emailForm','#gotifyForm','#triggerForm'].forEach(wireForm);
+$('#testWeeklySummary')?.addEventListener('click', async () => { const r = await post('/api/weekly-summary',{force:true}); toast(JSON.stringify(r).slice(0,180)); });
+['#scheduleForm','#verifyForm','#telegramForm','#emailForm','#weeklySummaryForm','#gotifyForm','#triggerForm'].forEach(wireForm);
 setupClientAdmin();
 setupProviderSelect();
 load();
